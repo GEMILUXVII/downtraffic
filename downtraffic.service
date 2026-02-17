@@ -1,0 +1,41 @@
+[Unit]
+Description=DownTraffic - Download Traffic Generator
+Documentation=https://github.com/your-repo/downtraffic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+
+# 可执行文件及参数（根据需要修改）
+ExecStart=/opt/downtraffic/downtraffic -t 4 -f /opt/downtraffic/urls.txt
+
+# 优雅退出
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# 崩溃自动重启
+Restart=always
+RestartSec=10
+
+# 资源限制
+MemoryMax=256M
+CPUQuota=50%
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/downtraffic
+PrivateTmp=true
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=downtraffic
+
+[Install]
+WantedBy=multi-user.target
