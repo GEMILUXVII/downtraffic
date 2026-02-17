@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -10,6 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,7 +27,7 @@ import (
 // ============================================================================
 
 var (
-	version = "1.0.0"
+	version = "1.1.0"
 
 	// 内置默认 URL 列表（当无外部文件时使用）
 	defaultURLs = []string{
@@ -140,6 +144,83 @@ func parseSize(s string) (int64, error) {
 	return int64(val * float64(multiplier)), nil
 }
 
+// ============================================================================
+// 网卡流量读取（对等模式核心）
+// ============================================================================
+
+// netStats 存储网卡的收发字节数
+type netStats struct {
+	RxBytes int64 // 接收（下载）
+	TxBytes int64 // 发送（上传）
+}
+
+// getNetStats 从 /proc/net/dev 读取指定网卡的流量统计
+func getNetStats(iface string) (*netStats, error) {
+	file, err := os.Open("/proc/net/dev")
+	if err != nil {
+		return nil, fmt.Errorf("无法读取 /proc/net/dev: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// 格式: iface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+		if !strings.HasPrefix(line, iface+":") {
+			continue
+		}
+		parts := strings.Fields(strings.TrimPrefix(line, iface+":"))
+		if len(parts) < 10 {
+			return nil, fmt.Errorf("解析 /proc/net/dev 失败: 字段不足")
+		}
+		rxBytes, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("解析 RX 字节数失败: %v", err)
+		}
+		txBytes, err := strconv.ParseInt(parts[8], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("解析 TX 字节数失败: %v", err)
+		}
+		return &netStats{RxBytes: rxBytes, TxBytes: txBytes}, nil
+	}
+	return nil, fmt.Errorf("未找到网卡 %s", iface)
+}
+
+// detectInterface 自动检测主要网卡名称
+func detectInterface() string {
+	// 常见网卡名，按优先级排序
+	candidates := []string{"eth0", "ens3", "ens18", "ens192", "enp0s3", "enp1s0", "venet0"}
+
+	// 也扫描 /sys/class/net/ 下的实际网卡
+	matches, _ := filepath.Glob("/sys/class/net/*")
+	for _, m := range matches {
+		name := filepath.Base(m)
+		if name == "lo" || strings.HasPrefix(name, "docker") ||
+			strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "veth") ||
+			strings.HasPrefix(name, "virbr") {
+			continue
+		}
+		// 检查是否已在候选列表中
+		found := false
+		for _, c := range candidates {
+			if c == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			candidates = append(candidates, name)
+		}
+	}
+
+	for _, iface := range candidates {
+		if _, err := getNetStats(iface); err == nil {
+			return iface
+		}
+	}
+	return "eth0" // fallback
+}
+
 // loadURLs 从文件加载 URL 列表，失败时返回默认列表
 func loadURLs(path string) []string {
 	if path == "" {
@@ -243,7 +324,7 @@ func truncateURL(url string) string {
 }
 
 // statsReporter 定期打印下载统计信息
-func statsReporter(ctx context.Context, counter *int64, startTime time.Time, limitBytes int64) {
+func statsReporter(ctx context.Context, counter *int64, startTime time.Time, limitBytes int64, balanceMode bool, iface string, offsetBytes int64) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -265,7 +346,18 @@ func statsReporter(ctx context.Context, counter *int64, startTime time.Time, lim
 				formatBytes(currentBytes),
 				formatDuration(elapsed),
 			)
-			if limitBytes > 0 {
+
+			if balanceMode && iface != "" {
+				// 对等模式：显示实时上下行差距
+				if stats, err := getNetStats(iface); err == nil {
+					gap := stats.TxBytes + offsetBytes - stats.RxBytes
+					if gap > 0 {
+						line += fmt.Sprintf(" | 剩余差距: %s", formatBytes(gap))
+					} else {
+						line += " | ✓ 已对等"
+					}
+				}
+			} else if limitBytes > 0 {
 				progress := float64(currentBytes) / float64(limitBytes) * 100
 				line += fmt.Sprintf(" | 进度: %.1f%%", progress)
 			}
@@ -274,27 +366,49 @@ func statsReporter(ctx context.Context, counter *int64, startTime time.Time, lim
 	}
 }
 
-func printBanner(workers int, duration string, limit string, urlFile string, urlCount int) {
+type config struct {
+	workers     int
+	durationStr string
+	limitStr    string
+	urlFile     string
+	urlCount    int
+	balanceMode bool
+	iface       string
+	offsetStr   string
+	gapBytes    int64
+}
+
+func printBanner(cfg *config) {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════╗")
 	fmt.Println("║         DownTraffic v" + version + "                      ║")
 	fmt.Println("║         Linux 下载流量消耗工具                  ║")
 	fmt.Println("╚══════════════════════════════════════════════════╝")
 	fmt.Println()
-	fmt.Printf("  并发数:   %d 个 worker\n", workers)
-	if duration != "" && duration != "0" {
-		fmt.Printf("  运行时长: %s\n", duration)
-	} else {
-		fmt.Printf("  运行时长: 无限制 (Ctrl+C 停止)\n")
+	if cfg.balanceMode {
+		fmt.Println("  模式:     ⚖️  对等模式 (自动平衡上下行)")
+		fmt.Printf("  网卡:     %s\n", cfg.iface)
+		if cfg.offsetStr != "" && cfg.offsetStr != "0" {
+			fmt.Printf("  额外偏移: %s\n", cfg.offsetStr)
+		}
+		fmt.Printf("  当前差距: %s (需下载)\n", formatBytes(cfg.gapBytes))
 	}
-	if limit != "" && limit != "0" {
-		fmt.Printf("  流量上限: %s\n", limit)
-	} else {
-		fmt.Printf("  流量上限: 无限制\n")
+	fmt.Printf("  并发数:   %d 个 worker\n", cfg.workers)
+	if !cfg.balanceMode {
+		if cfg.durationStr != "" && cfg.durationStr != "0" {
+			fmt.Printf("  运行时长: %s\n", cfg.durationStr)
+		} else {
+			fmt.Printf("  运行时长: 无限制 (Ctrl+C 停止)\n")
+		}
+		if cfg.limitStr != "" && cfg.limitStr != "0" {
+			fmt.Printf("  流量上限: %s\n", cfg.limitStr)
+		} else {
+			fmt.Printf("  流量上限: 无限制\n")
+		}
 	}
-	fmt.Printf("  下载源:   %d 个 URL\n", urlCount)
-	if urlFile != "" {
-		fmt.Printf("  URL 文件: %s\n", urlFile)
+	fmt.Printf("  下载源:   %d 个 URL\n", cfg.urlCount)
+	if cfg.urlFile != "" {
+		fmt.Printf("  URL 文件: %s\n", cfg.urlFile)
 	} else {
 		fmt.Printf("  URL 文件: 内置列表\n")
 	}
@@ -309,6 +423,9 @@ func main() {
 	durationStr := flag.String("d", "0", "运行时长 (如 30s, 5m, 2h, 1d)，0=无限")
 	limitStr := flag.String("l", "0", "总下载量上限 (如 100G, 500M, 1T)，0=无限")
 	urlFile := flag.String("f", "", "URL 列表文件路径 (每行一个URL，#开头为注释)")
+	balanceMode := flag.Bool("b", false, "对等模式: 自动计算上下行差距，下载至对等后停止")
+	iface := flag.String("i", "", "网卡名称 (默认自动检测，如 eth0, ens3)")
+	offsetStr := flag.String("offset", "0", "对等模式额外偏移量，即监控中已有的上下行差距 (如 1300G)")
 	showVersion := flag.Bool("v", false, "显示版本号")
 	flag.Parse()
 
@@ -319,6 +436,11 @@ func main() {
 
 	if *workers < 1 {
 		log.Fatal("✗ 线程数必须 >= 1")
+	}
+
+	// 对等模式只在 Linux 上可用
+	if *balanceMode && runtime.GOOS != "linux" {
+		log.Fatal("✗ 对等模式 (-b) 仅支持 Linux 系统")
 	}
 
 	// 解析运行时长
@@ -333,11 +455,58 @@ func main() {
 		log.Fatalf("✗ 无效的大小格式: %v", err)
 	}
 
+	// 解析偏移量
+	offsetBytes, err := parseSize(*offsetStr)
+	if err != nil {
+		log.Fatalf("✗ 无效的偏移量格式: %v", err)
+	}
+
+	// 对等模式：计算需要下载的量
+	var gapBytes int64
+	actualIface := *iface
+	if *balanceMode {
+		if actualIface == "" {
+			actualIface = detectInterface()
+		}
+		stats, err := getNetStats(actualIface)
+		if err != nil {
+			log.Fatalf("✗ 读取网卡 %s 流量失败: %v", actualIface, err)
+		}
+		// 差距 = (上行 + 额外偏移) - 下行
+		gapBytes = stats.TxBytes + offsetBytes - stats.RxBytes
+		if gapBytes <= 0 {
+			fmt.Println("\n✓ 上下行已经对等（下行 >= 上行），无需额外下载")
+			fmt.Printf("  网卡:   %s\n", actualIface)
+			fmt.Printf("  上行:   %s\n", formatBytes(stats.TxBytes+offsetBytes))
+			fmt.Printf("  下行:   %s\n", formatBytes(stats.RxBytes))
+			os.Exit(0)
+		}
+		// 在对等模式下，将 gap 设为下载上限
+		limitBytes = gapBytes
+		log.Printf("✓ 检测到网卡 %s | 上行: %s | 下行: %s | 差距: %s",
+			actualIface,
+			formatBytes(stats.TxBytes+offsetBytes),
+			formatBytes(stats.RxBytes),
+			formatBytes(gapBytes),
+		)
+	}
+
 	// 加载 URL 列表
 	urls := loadURLs(*urlFile)
 
 	// 打印启动信息
-	printBanner(*workers, *durationStr, *limitStr, *urlFile, len(urls))
+	cfg := &config{
+		workers:     *workers,
+		durationStr: *durationStr,
+		limitStr:    *limitStr,
+		urlFile:     *urlFile,
+		urlCount:    len(urls),
+		balanceMode: *balanceMode,
+		iface:       actualIface,
+		offsetStr:   *offsetStr,
+		gapBytes:    gapBytes,
+	}
+	printBanner(cfg)
 
 	// 创建可取消的 context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,9 +527,9 @@ func main() {
 	startTime := time.Now()
 
 	// 启动统计打印协程
-	go statsReporter(ctx, &totalBytes, startTime, limitBytes)
+	go statsReporter(ctx, &totalBytes, startTime, limitBytes, *balanceMode, actualIface, offsetBytes)
 
-	// 流量上限检查协程
+	// 流量上限检查协程（普通模式或对等模式都使用）
 	if limitBytes > 0 {
 		go func() {
 			ticker := time.NewTicker(500 * time.Millisecond)
@@ -370,10 +539,23 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if atomic.LoadInt64(&totalBytes) >= limitBytes {
-						log.Printf("\n\n✓ 已达到流量上限 %s，正在停止...", formatBytes(limitBytes))
-						cancel()
-						return
+					if *balanceMode {
+						// 对等模式：实时读取网卡数据判断是否已对等
+						if stats, err := getNetStats(actualIface); err == nil {
+							gap := stats.TxBytes + offsetBytes - stats.RxBytes
+							if gap <= 0 {
+								fmt.Printf("\n\n✓ 上下行已对等！正在停止...\n")
+								cancel()
+								return
+							}
+						}
+					} else {
+						// 普通模式：按累计下载量判断
+						if atomic.LoadInt64(&totalBytes) >= limitBytes {
+							log.Printf("\n\n✓ 已达到流量上限 %s，正在停止...", formatBytes(limitBytes))
+							cancel()
+							return
+						}
 					}
 				}
 			}
@@ -414,5 +596,15 @@ func main() {
 	fmt.Printf("║  运行时长:   %-36s║\n", formatDuration(elapsed))
 	fmt.Printf("║  平均速率:   %-36s║\n", formatSpeed(avgSpeed))
 	fmt.Printf("║  并发线程:   %-36s║\n", fmt.Sprintf("%d", *workers))
+	if *balanceMode {
+		if stats, err := getNetStats(actualIface); err == nil {
+			gap := stats.TxBytes + offsetBytes - stats.RxBytes
+			if gap <= 0 {
+				fmt.Printf("║  对等状态:   %-36s║\n", "✓ 已对等")
+			} else {
+				fmt.Printf("║  剩余差距:   %-36s║\n", formatBytes(gap))
+			}
+		}
+	}
 	fmt.Println("╚══════════════════════════════════════════════════╝")
 }
