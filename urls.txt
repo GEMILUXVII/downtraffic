@@ -1,36 +1,27 @@
 # DownTraffic 下载源列表
 # 每行一个 URL，# 开头为注释
-# 建议使用大文件以获得最佳下载效率
+# 优先使用 HTTP（避免 TLS 证书过期问题）和大文件
 
-# === Hetzner Speed Test (DE) ===
-https://speed.hetzner.de/100MB.bin
-https://speed.hetzner.de/1GB.bin
-https://speed.hetzner.de/10GB.bin
-
-# === Hetzner Speed Test (US Ashburn) ===
-https://ash-speed.hetzner.com/100MB.bin
-https://ash-speed.hetzner.com/1GB.bin
-https://ash-speed.hetzner.com/10GB.bin
+# === Tele2 Speed Test (稳定可靠) ===
+http://speedtest.tele2.net/100MB.zip
+http://speedtest.tele2.net/1GB.zip
+http://speedtest.tele2.net/10GB.zip
 
 # === OVH Speed Test ===
 http://proof.ovh.net/files/100Mb.dat
 http://proof.ovh.net/files/1Gb.dat
 http://proof.ovh.net/files/10Gb.dat
 
-# === Tele2 Speed Test ===
-http://speedtest.tele2.net/100MB.zip
-http://speedtest.tele2.net/1GB.zip
-http://speedtest.tele2.net/10GB.zip
+# === Hetzner Speed Test (US Ashburn) ===
+http://ash-speed.hetzner.com/100MB.bin
+http://ash-speed.hetzner.com/1GB.bin
+http://ash-speed.hetzner.com/10GB.bin
 
 # === ThinkBroadband (UK) ===
 http://ipv4.download.thinkbroadband.com/100MB.zip
 http://ipv4.download.thinkbroadband.com/1GB.zip
 
-# === Virtua.Cloud ===
-https://speedtest.fra1.virtua.cloud/100MB.bin
-https://speedtest.fra1.virtua.cloud/1GB.bin
-https://speedtest.fra1.virtua.cloud/10GB.bin
-
-# === Testfile.org ===
-https://testfile.org/files/100MB
-https://testfile.org/files/1GB
+# === Hetzner Speed Test (DE) - 用 HTTP 避免证书问题 ===
+http://speed.hetzner.de/100MB.bin
+http://speed.hetzner.de/1GB.bin
+http://speed.hetzner.de/10GB.bin

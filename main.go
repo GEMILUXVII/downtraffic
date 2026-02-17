@@ -30,26 +30,27 @@ var (
 	version = "1.1.0"
 
 	// 内置默认 URL 列表（当无外部文件时使用）
+	// 优先使用 HTTP 避免 TLS 证书问题
 	defaultURLs = []string{
-		// Hetzner Speed Test (DE)
-		"https://speed.hetzner.de/100MB.bin",
-		"https://speed.hetzner.de/1GB.bin",
-		"https://speed.hetzner.de/10GB.bin",
-		// Hetzner Speed Test (US)
-		"https://ash-speed.hetzner.com/100MB.bin",
-		"https://ash-speed.hetzner.com/1GB.bin",
-		"https://ash-speed.hetzner.com/10GB.bin",
+		// Tele2 Speed Test (稳定可靠)
+		"http://speedtest.tele2.net/100MB.zip",
+		"http://speedtest.tele2.net/1GB.zip",
+		"http://speedtest.tele2.net/10GB.zip",
 		// OVH Speed Test
 		"http://proof.ovh.net/files/100Mb.dat",
 		"http://proof.ovh.net/files/1Gb.dat",
 		"http://proof.ovh.net/files/10Gb.dat",
-		// Tele2 Speed Test
-		"http://speedtest.tele2.net/100MB.zip",
-		"http://speedtest.tele2.net/1GB.zip",
-		"http://speedtest.tele2.net/10GB.zip",
-		// ThinkBroadband
+		// Hetzner Speed Test (US Ashburn)
+		"http://ash-speed.hetzner.com/100MB.bin",
+		"http://ash-speed.hetzner.com/1GB.bin",
+		"http://ash-speed.hetzner.com/10GB.bin",
+		// ThinkBroadband (UK)
 		"http://ipv4.download.thinkbroadband.com/100MB.zip",
 		"http://ipv4.download.thinkbroadband.com/1GB.zip",
+		// Hetzner Speed Test (DE) - HTTP
+		"http://speed.hetzner.de/100MB.bin",
+		"http://speed.hetzner.de/1GB.bin",
+		"http://speed.hetzner.de/10GB.bin",
 	}
 )
 
