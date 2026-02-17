@@ -31,22 +31,25 @@ var (
 
 	// 内置默认 URL 列表（当无外部文件时使用）
 	defaultURLs = []string{
-		// Hetzner Speed Test
+		// Hetzner Speed Test (DE)
 		"https://speed.hetzner.de/100MB.bin",
 		"https://speed.hetzner.de/1GB.bin",
 		"https://speed.hetzner.de/10GB.bin",
+		// Hetzner Speed Test (US)
+		"https://ash-speed.hetzner.com/100MB.bin",
+		"https://ash-speed.hetzner.com/1GB.bin",
+		"https://ash-speed.hetzner.com/10GB.bin",
 		// OVH Speed Test
 		"http://proof.ovh.net/files/100Mb.dat",
 		"http://proof.ovh.net/files/1Gb.dat",
-		// Scaleway Speed Test
-		"https://multi.speedtest.net/10M",
-		"https://multi.speedtest.net/100M",
+		"http://proof.ovh.net/files/10Gb.dat",
 		// Tele2 Speed Test
-		"https://ash-speed.hetzner.com/100MB.bin",
-		"https://ash-speed.hetzner.com/1GB.bin",
-		// Linux ISOs
-		"https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso",
-		"https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.9.0-amd64-netinst.iso",
+		"http://speedtest.tele2.net/100MB.zip",
+		"http://speedtest.tele2.net/1GB.zip",
+		"http://speedtest.tele2.net/10GB.zip",
+		// ThinkBroadband
+		"http://ipv4.download.thinkbroadband.com/100MB.zip",
+		"http://ipv4.download.thinkbroadband.com/1GB.zip",
 	}
 )
 
